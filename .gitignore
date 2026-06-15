@@ -1,0 +1,27 @@
+# secrets — never commit the API key
+.env
+
+# generated cache files (rebuilt by schema_cache.py on the target machine)
+backend/schema_cache.json
+backend/schema_embeddings.npy
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Frontend build output
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/

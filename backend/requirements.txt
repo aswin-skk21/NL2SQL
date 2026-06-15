@@ -1,0 +1,7 @@
+google-genai
+pyodbc
+vanna==2.0.2
+pandas
+numpy
+sqlparse
+tabulate
