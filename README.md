@@ -15,6 +15,52 @@ Question → Embed → Schema Route → Generate SQL → Validate & Self-Correct
 5. **Execute** — runs the validated SQL and returns a pandas DataFrame
 6. **Answer** — Gemini Flash converts the results into a plain-English response
 
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Clients
+        CLI["main.py<br/>(CLI entry point)"]
+        Web["frontend/<br/>(static JS UI)"]
+    end
+
+    Web -- "POST /api/query" --> API["app/api.py<br/>(FastAPI server)"]
+    CLI -- "run_pipeline()" --> Pipeline
+
+    subgraph Pipeline["backend/app/pipeline"]
+        Router["router.py<br/>schema routing"]
+        Gen["sql_generator.py<br/>NL → T-SQL"]
+        Val["validator.py<br/>SET NOEXEC ON<br/>self-correct loop"]
+        Exec["executor.py<br/>run SQL"]
+        Ans["answerer.py<br/>DataFrame → NL answer"]
+        Emb["embedder.py<br/>Gemini text-embedding-004"]
+    end
+
+    API --> Router
+    Router --> Gen --> Val --> Exec --> Ans
+    Router -. cosine similarity .-> Emb
+
+    Cache[("schema_cache.json +<br/>schema_embeddings.npy")]
+    Router -. reads .-> Cache
+
+    Val -- dry-run / execute --> SQLServer[("MS SQL Server<br/>(7 servers, Windows Auth)")]
+    Exec -- execute --> SQLServer
+
+    Gemini{{"Google Gemini API<br/>(embed / flash / pro)"}}
+    Emb --> Gemini
+    Router --> Gemini
+    Gen --> Gemini
+    Val --> Gemini
+    Ans --> Gemini
+
+    Discover["scripts/discover_databases.py"] -- populates --> Config["app/config.py<br/>(SERVERS)"]
+    SchemaCache["scripts/schema_cache.py"] -- introspects --> SQLServer
+    SchemaCache -- builds --> Cache
+    Config -- connection info --> SchemaCache
+    Config -- connection info --> Val
+    Config -- connection info --> Exec
+```
+
 ## Project structure
 
 ```
