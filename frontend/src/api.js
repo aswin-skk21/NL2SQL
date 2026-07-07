@@ -1,6 +1,3 @@
-// Thin client for the NL2SQL backend.
-// Response shape mirrors QueryResponse in backend/app/api.py.
-
 export async function askQuestion(question) {
   const res = await fetch("/api/query", {
     method: "POST",
@@ -13,9 +10,7 @@ export async function askQuestion(question) {
     try {
       const body = await res.json();
       if (body?.detail) detail = body.detail;
-    } catch {
-      // response had no JSON body; keep the status-based message
-    }
+    } catch {}
     throw new Error(detail);
   }
 
