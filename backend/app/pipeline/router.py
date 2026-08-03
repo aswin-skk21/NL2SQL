@@ -12,7 +12,7 @@ from ..prompts import ROUTER_SYSTEM, ROUTER_USER
 
 _SIMILARITY_THRESHOLD = 0.35
 _MAX_CANDIDATES = 25
-_ROUTER_MODEL = "gemini-2.5-flash"
+_ROUTER_MODEL = "gemini-flash-lite-latest"
 
 
 def route(
@@ -85,6 +85,7 @@ def _llm_route(
             system_instruction=ROUTER_SYSTEM,
             temperature=0.0,
             response_mime_type="application/json",
+            thinking_config=types.ThinkingConfig(thinking_budget=1),
         ),
     )
     raw = resp.text.strip()

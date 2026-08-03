@@ -11,7 +11,7 @@ from ..prompts import SQL_CORRECT_SYSTEM, SQL_CORRECT_USER
 from .sql_generator import _format_schema_block, extract_sql_from_response
 
 _MAX_RETRIES = 3
-_CORRECT_MODEL = "gemini-2.5-pro"
+_CORRECT_MODEL = "gemini-flash-lite-latest"
 
 # Matched against parsed *keyword tokens* only — never as substrings, or ordinary
 # columns like UpdatedDate / IsDeleted / ExecutionTime would be rejected.
@@ -130,6 +130,7 @@ def _llm_correct(
         config=types.GenerateContentConfig(
             system_instruction=SQL_CORRECT_SYSTEM,
             temperature=temperature,
+            thinking_config=types.ThinkingConfig(thinking_budget=1),
         ),
     )
     return extract_sql_from_response(resp.text.strip())

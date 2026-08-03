@@ -6,7 +6,7 @@ from google.genai import types
 from ..models import ExecutionResult
 from ..prompts import ANSWER_SYSTEM, ANSWER_USER
 
-_ANSWER_MODEL = "gemini-2.5-flash"
+_ANSWER_MODEL = "gemini-flash-lite-latest"
 _MAX_DISPLAY_ROWS = 50
 
 
@@ -37,6 +37,7 @@ def generate_answer(
         config=types.GenerateContentConfig(
             system_instruction=ANSWER_SYSTEM,
             temperature=temperature,
+            thinking_config=types.ThinkingConfig(thinking_budget=1),
         ),
     )
     return resp.text.strip()
