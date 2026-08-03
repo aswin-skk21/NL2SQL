@@ -3,8 +3,9 @@ from __future__ import annotations
 import sqlparse
 from google import genai
 from google.genai import types
+from sqlparse import tokens as T
 
-from ..config import SERVERS, build_odbc_conn_str
+from ..config import CONNECT_TIMEOUT, resolve_conn_str
 from ..models import GeneratedSQL, SchemaContext, ValidationResult
 from ..prompts import SQL_CORRECT_SYSTEM, SQL_CORRECT_USER
 from .sql_generator import _format_schema_block, extract_sql_from_response
@@ -12,7 +13,16 @@ from .sql_generator import _format_schema_block, extract_sql_from_response
 _MAX_RETRIES = 3
 _CORRECT_MODEL = "gemini-2.5-pro"
 
-_FORBIDDEN = {"drop", "insert", "update", "delete", "truncate", "exec", "execute", "xp_"}
+# Matched against parsed *keyword tokens* only — never as substrings, or ordinary
+# columns like UpdatedDate / IsDeleted / ExecutionTime would be rejected.
+_FORBIDDEN_KEYWORDS = {
+    "drop", "insert", "update", "delete", "truncate", "exec", "execute",
+    "merge", "alter", "create", "grant", "revoke", "shutdown", "backup",
+    "restore", "into",
+}
+
+# Functions that can reach data outside the selected database.
+_FORBIDDEN_NAMES = {"openrowset", "opendatasource", "openquery", "openxml"}
 
 
 def validate_and_correct(
@@ -45,17 +55,33 @@ def validate_and_correct(
 
 
 def _sqlparse_guard(sql: str) -> str | None:
-    """Reject non-SELECT statements and block forbidden keywords."""
-    parsed = sqlparse.parse(sql.strip())
-    if not parsed:
+    """Reject anything that is not a single read-only SELECT statement.
+
+    Checks keyword *tokens* rather than raw substrings: a substring scan rejects
+    legitimate queries that merely mention a column named UpdatedDate,
+    IsDeleted or ExecutionTime.
+    """
+    statements = [s for s in sqlparse.parse(sql.strip()) if str(s).strip(" ;\n\t")]
+    if not statements:
         return "Empty or unparseable SQL."
-    first_token = parsed[0].get_type()
-    if first_token != "SELECT":
-        return f"Only SELECT statements are allowed; got statement type: {first_token!r}."
-    lowered = sql.lower()
-    for kw in _FORBIDDEN:
-        if kw in lowered:
-            return f"Forbidden keyword detected: {kw!r}."
+    if len(statements) > 1:
+        # Blocks stacked queries such as "SELECT 1; DROP TABLE x".
+        return f"Only a single statement is allowed; got {len(statements)}."
+
+    statement = statements[0]
+    stmt_type = statement.get_type()
+    if stmt_type != "SELECT":
+        return f"Only SELECT statements are allowed; got statement type: {stmt_type!r}."
+
+    for token in statement.flatten():
+        if token.ttype in (T.Keyword, T.Keyword.DML, T.Keyword.DDL, T.Keyword.CTE):
+            if token.normalized.lower() in _FORBIDDEN_KEYWORDS:
+                return f"Forbidden keyword detected: {token.normalized.upper()!r}."
+        value = token.value.strip('[]"').lower()
+        if value in _FORBIDDEN_NAMES:
+            return f"Forbidden function detected: {token.value!r}."
+        if value.startswith("xp_") and (token.ttype in T.Name or token.ttype in T.Keyword):
+            return f"Forbidden extended stored procedure: {token.value!r}."
     return None
 
 
@@ -66,13 +92,13 @@ def _dry_run(sql: str, server: str, database: str) -> str | None:
     """
     import pyodbc
 
-    if server not in SERVERS:
-        return f"Unknown server alias '{server}'."
-
-    cfg = SERVERS[server]
-    conn_str = build_odbc_conn_str(cfg, database)
     try:
-        with pyodbc.connect(conn_str, autocommit=True, timeout=10) as conn:
+        conn_str = resolve_conn_str(server, database)
+    except (KeyError, ValueError) as exc:
+        return str(exc)
+
+    try:
+        with pyodbc.connect(conn_str, autocommit=True, timeout=CONNECT_TIMEOUT) as conn:
             cursor = conn.cursor()
             cursor.execute("SET NOEXEC ON")
             try:

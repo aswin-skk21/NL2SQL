@@ -1,12 +1,16 @@
-# secrets — never commit the API key
+# secrets — never commit the API key or the shared access token
 .env
+.env.*
+!.env.example
 
-# generated cache files (rebuilt by schema_cache.py on the target machine)
-backend/schema_cache.json
-backend/schema_embeddings.npy
+# generated schema cache — contains a full table/column inventory of the
+# production databases. Rebuilt by scripts/schema_cache.py on the target machine.
+backend/scripts/schema_cache.json
+backend/scripts/schema_embeddings.npy
 
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -19,6 +23,9 @@ build/
 # IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store
 
 # Frontend build output
 frontend/node_modules/

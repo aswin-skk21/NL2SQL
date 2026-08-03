@@ -1,18 +1,17 @@
 import os
 from dataclasses import dataclass, field
 
-from vanna.integrations.google import GeminiLlmService
-from vanna.integrations.mssql import MSSQLRunner
-
-
 # ---------------------------------------------------------------------------
-# LLM
+# Connection limits
+#
+# CONNECT_TIMEOUT bounds how long we wait to open a socket to SQL Server.
+# QUERY_TIMEOUT bounds how long a single statement may run — without it an
+# LLM-generated query can pin a production server indefinitely.
 # ---------------------------------------------------------------------------
 
-llm = GeminiLlmService(
-    model="gemini-2.5-pro",
-    api_key=os.getenv("GOOGLE_API_KEY"),
-)
+CONNECT_TIMEOUT = int(os.getenv("NL2SQL_CONNECT_TIMEOUT", "10"))
+QUERY_TIMEOUT = int(os.getenv("NL2SQL_QUERY_TIMEOUT", "60"))
+MAX_ROWS = int(os.getenv("NL2SQL_MAX_ROWS", "5000"))
 
 
 # ---------------------------------------------------------------------------
@@ -86,11 +85,14 @@ def build_odbc_conn_str(cfg: ServerConfig, database: str) -> str:
     return ";".join(f"{k}={v}" for k, v in parts.items())
 
 
-def get_runner(server: str, database: str) -> MSSQLRunner:
-    """Return an MSSQLRunner for the given server alias and database name.
+def resolve_conn_str(server: str, database: str) -> str:
+    """Return a validated ODBC connection string for a server alias + database.
+
+    Validating against SERVERS keeps an LLM-chosen (server, database) pair from
+    reaching a target that was never configured.
 
     Args:
-        server:   Key from SERVERS (e.g. "server1").
+        server:   Key from SERVERS (e.g. "sqlProd1").
         database: Database name that must exist in ServerConfig.databases.
 
     Raises:
@@ -107,8 +109,7 @@ def get_runner(server: str, database: str) -> MSSQLRunner:
             f"Available: {cfg.databases}"
         )
 
-    conn_str = build_odbc_conn_str(cfg, database)
-    return MSSQLRunner(odbc_conn_str=conn_str)
+    return build_odbc_conn_str(cfg, database)
 
 
 def list_targets() -> list[tuple[str, str]]:

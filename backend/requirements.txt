@@ -1,9 +1,10 @@
-google-genai
-pyodbc
-vanna==2.0.2
-pandas
-numpy
-sqlparse
-tabulate
-fastapi
-uvicorn[standard]
+# Pinned to the versions verified working. If a wheel is unavailable for the
+# target Python on Windows, relax the pin for that one package.
+google-genai==2.10.0
+pyodbc==5.3.0
+pandas==3.0.3
+numpy==2.4.6
+sqlparse==0.5.5
+tabulate==0.10.0
+fastapi==0.139.0
+uvicorn[standard]==0.50.2

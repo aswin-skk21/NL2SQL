@@ -82,9 +82,16 @@ NL2SQL/
 │   │   └── schema_cache.py        # introspect schema, build embedding index
 │   ├── env_loader.py           # minimal .env loader (no extra deps)
 │   ├── main.py                 # CLI entry point
+│   ├── server.py               # FastAPI server entry point
 │   └── requirements.txt
-├── frontend/                   # future web UI
-├── .env                        # gitignored — put your API key here
+├── frontend/                   # React + Vite UI, served by the API at /
+│   ├── src/
+│   │   ├── App.jsx             # question form, token gate, results table
+│   │   └── api.js              # fetch wrapper + token storage
+│   └── package.json
+├── .env                        # gitignored — API key and access token
+├── .env.example                # template to copy
+├── DEPLOY.md                   # Windows server deployment runbook
 └── .gitignore
 ```
 
@@ -106,11 +113,16 @@ pip install -r requirements.txt
 
 ### Configure
 
-Add your Google API key to `.env` at the repo root:
+Copy `.env.example` to `.env` at the repo root and fill in both values:
 
 ```
 GOOGLE_API_KEY=your-key-here
+NL2SQL_API_TOKEN=generate-with-secrets-token-urlsafe
 ```
+
+The web server refuses to start unless both are set — the API executes generated
+SQL against production, so it fails closed rather than running unauthenticated.
+The CLI only needs `GOOGLE_API_KEY`.
 
 ### First-time setup (run on the Windows RDP machine)
 
@@ -149,6 +161,41 @@ python main.py
 Question: <type your question>
 ```
 
+### Web UI
+
+Build the frontend once, then start the server:
+
+```bash
+cd frontend && npm ci && npm run build
+cd ../backend && python server.py
+```
+
+Open `http://localhost:8000/`, paste the `NL2SQL_API_TOKEN`, and ask a question.
+The API serves the built UI from `frontend/dist` at `/`.
+
+For frontend development with hot reload, run `npm run dev` in `frontend/` — Vite
+proxies `/api` to the backend on port 8000.
+
+To deploy this on the internal Windows server, follow **[DEPLOY.md](DEPLOY.md)**.
+
+## API
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /api/health` | none | status, cached table count, cache build time |
+| `POST /api/query` | `Authorization: Bearer <NL2SQL_API_TOKEN>` | `{"question": "..."}` → answer, SQL, rows |
+
+## Safety
+
+- Only a **single `SELECT` statement** is allowed. The validator parses the SQL
+  and inspects keyword *tokens*, so columns like `UpdatedDate` or `IsDeleted`
+  pass while real DML, stacked statements, `SELECT ... INTO`, `OPENROWSET`, and
+  `xp_` procedures are rejected.
+- Every statement is dry-run with `SET NOEXEC ON` before execution.
+- Queries are bounded by `NL2SQL_QUERY_TIMEOUT` (60s) and `NL2SQL_MAX_ROWS` (5000).
+- Grant the service account `db_datareader` only — defence in depth if a guard
+  is ever bypassed.
+
 ## Authentication
 
 All SQL Server connections use **Windows Authentication** (`Trusted_Connection=yes`). No credentials are stored in code or config. You must run the pipeline from the Windows RDP machine where your domain session is active (authenticated via Duo MFA).
@@ -183,9 +230,9 @@ Named instances (e.g. `sqlProd1\org`) omit the port so SQL Server Browser resolv
 | Package | Purpose |
 |---|---|
 | `google-genai` | Gemini LLM + embeddings |
-| `pyodbc` | SQL Server ODBC driver bridge |
-| `vanna` | `MSSQLRunner` for SQL execution |
+| `pyodbc` | SQL Server ODBC driver bridge + query execution |
 | `pandas` | query results as DataFrames |
 | `numpy` | cosine similarity over embedding matrix |
-| `sqlparse` | pre-flight SQL statement type check |
+| `sqlparse` | SQL statement parsing and the read-only guard |
 | `tabulate` | DataFrame markdown formatting |
+| `fastapi` / `uvicorn` | web API and server |

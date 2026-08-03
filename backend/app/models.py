@@ -59,6 +59,7 @@ class ExecutionResult:
     df: pd.DataFrame
     row_count: int
     sql_executed: str
+    truncated: bool = False
 
 
 @dataclass
