@@ -8,7 +8,7 @@ from google.genai import types
 from ..models import GeneratedSQL, SchemaContext, TableInfo
 from ..prompts import SQL_GEN_SYSTEM, SQL_GEN_USER
 
-_GEN_MODEL = "gemini-2.5-pro"
+_GEN_MODEL = "gemini-flash-lite-latest"
 
 
 def generate_sql(
@@ -29,6 +29,7 @@ def generate_sql(
         config=types.GenerateContentConfig(
             system_instruction=SQL_GEN_SYSTEM,
             temperature=temperature,
+            thinking_config=types.ThinkingConfig(thinking_budget=1),
         ),
     )
     full_text = resp.text.strip()
