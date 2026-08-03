@@ -53,12 +53,24 @@
   box-sizing: border-box;
 }
 
+html {
+  min-height: 100%;
+  background: var(--bg);
+}
+
 body {
   margin: 0;
+  min-height: 100vh;
   background: var(--bg);
   background-image: var(--bg-gradient);
+  background-attachment: fixed;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .app {
@@ -82,9 +94,6 @@ body {
   border-radius: 14px;
   background: linear-gradient(135deg, var(--accent), #8b6ef0);
   color: #fff;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
   box-shadow: 0 8px 20px rgba(79, 91, 213, 0.35);
 }
 
@@ -160,6 +169,43 @@ body {
   cursor: not-allowed;
 }
 
+.hint {
+  margin: 0 0 1.5rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: -0.75rem 0 1.75rem;
+}
+
+.example-chip {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.example-chip:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--row-hover);
+}
+
+.example-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .spinner {
   width: 14px;
   height: 14px;
@@ -213,12 +259,23 @@ body {
   }
 }
 
+.result-stale {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
 .card {
   padding: 1.25rem 1.4rem;
   background: var(--surface);
   border: 1px solid var(--surface-border);
   border-radius: 14px;
   box-shadow: var(--surface-shadow);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(16, 20, 30, 0.05), 0 12px 28px rgba(16, 20, 30, 0.08);
 }
 
 .card h2 {
@@ -228,6 +285,34 @@ body {
   letter-spacing: 0.05em;
   color: var(--text-muted);
   margin: 0 0 0.75rem;
+}
+
+.card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.card-heading h2 {
+  margin: 0;
+}
+
+.copy-btn {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.copy-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .answer p {
@@ -273,6 +358,11 @@ td {
   text-align: left;
   border-bottom: 1px solid var(--surface-border);
   white-space: nowrap;
+}
+
+td.cell-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 th {
