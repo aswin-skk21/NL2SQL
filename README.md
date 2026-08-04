@@ -46,7 +46,7 @@ graph TD
     Val -- dry-run / execute --> SQLServer[("MS SQL Server<br/>(7 servers, Windows Auth)")]
     Exec -- execute --> SQLServer
 
-    Gemini{{"Google Gemini API<br/>(gemini-flash-latest)"}}
+    Gemini{{"Google Gemini API<br/>(gemini-flash-lite-latest)"}}
     Router --> Gemini
     Gen --> Gemini
     Val --> Gemini
@@ -299,10 +299,16 @@ dataclass, and connection-string helpers, none of which name real infrastructure
 | Stage | Model | Why |
 |---|---|---|
 | Embedding | `BAAI/bge-small-en-v1.5` (local, via `fastembed`) | 384-dim, offline — no API quota/rate limit for the similarity pre-filter |
-| Schema routing | `gemini-flash-latest` | cheap classification, temp=0 |
-| SQL generation | `gemini-flash-latest` | writes the T-SQL from the routed schema |
-| SQL correction | `gemini-flash-latest` | same model sees the dry-run error and fixes it |
-| NL answer | `gemini-flash-latest` | summarizes the result set |
+| Schema routing | `gemini-flash-lite-latest` | cheap classification, temp=0, thinking_budget=1 |
+| SQL generation | `gemini-flash-lite-latest` | writes the T-SQL from the routed schema, thinking_budget=1 |
+| SQL correction | `gemini-flash-lite-latest` | same model sees the dry-run error and fixes it, thinking_budget=1 |
+| NL answer | `gemini-flash-lite-latest` | summarizes the result set, thinking_budget=1 |
+
+`thinking_budget=1` is the minimum this model accepts (0 is rejected). Combined
+with `flash-lite-latest`, this keeps each of the 4 Gemini calls per query well
+under a second — a full round trip (route → generate → validate → execute →
+answer) typically finishes in ~2s instead of ~20-25s under the default
+`flash-latest` + dynamic thinking.
 
 ## Dependencies
 
