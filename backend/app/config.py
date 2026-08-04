@@ -32,36 +32,17 @@ class ServerConfig:
     extra_params: dict[str, str] = field(default_factory=dict)
 
 
-SERVERS: dict[str, ServerConfig] = {
-    "dataTM1": ServerConfig(
-        host="dataTM1",
-        databases=[],
-    ),
-    "sqlProd1": ServerConfig(
-        host="sqlProd1",
-        databases=[],
-    ),
-    "sqlDev1": ServerConfig(
-        host="sqlDev1",
-        databases=[],
-    ),
-    "sqlProd1_org": ServerConfig(
-        host=r"sqlProd1\org",
-        databases=[],
-    ),
-    "sqlProd1_sf": ServerConfig(
-        host=r"sqlProd1\sf",
-        databases=[],
-    ),
-    "sqlProd1_x": ServerConfig(
-        host=r"sqlProd1\x",
-        databases=[],
-    ),
-    "sqlSTG1": ServerConfig(
-        host="sqlSTG1",
-        databases=[],
-    ),
-}
+# The real server/database topology names internal hosts and a full database
+# inventory, so it lives in servers.py (gitignored) instead of here — same
+# reasoning as schema_cache.json below. See servers.example.py for the shape.
+try:
+    from .servers import SERVERS
+except ImportError as exc:
+    raise RuntimeError(
+        "backend/app/servers.py not found. Copy servers.example.py to "
+        "servers.py and fill in your SQL Server topology, or run "
+        "'python scripts/discover_databases.py' to generate it."
+    ) from exc
 
 
 # ---------------------------------------------------------------------------

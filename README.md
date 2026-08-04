@@ -53,7 +53,7 @@ graph TD
     Val --> Gemini
     Ans --> Gemini
 
-    Discover["scripts/discover_databases.py"] -- populates --> Config["app/config.py<br/>(SERVERS)"]
+    Discover["scripts/discover_databases.py"] -- populates --> Config["app/servers.py<br/>(SERVERS, gitignored)"]
     SchemaCache["scripts/schema_cache.py"] -- introspects --> SQLServer
     SchemaCache -- builds --> Cache
     Config -- connection info --> SchemaCache
@@ -67,7 +67,9 @@ graph TD
 NL2SQL/
 ├── backend/
 │   ├── app/
-│   │   ├── config.py           # SQL Server connection config (7 servers)
+│   │   ├── config.py           # connection limits + ServerConfig/helpers
+│   │   ├── servers.py          # gitignored — real server/DB topology
+│   │   ├── servers.example.py  # template for servers.py
 │   │   ├── models.py           # shared dataclasses (pipeline contracts)
 │   │   ├── prompts.py          # all LLM prompt templates
 │   │   └── pipeline/
@@ -124,11 +126,15 @@ The web server refuses to start unless both are set — the API executes generat
 SQL against production, so it fails closed rather than running unauthenticated.
 The CLI only needs `GOOGLE_API_KEY`.
 
+Copy `backend/app/servers.example.py` to `backend/app/servers.py` (or just run
+Step 1 below, which creates it for you). `servers.py` names your internal SQL
+Server hosts and full database inventory, so it's gitignored — never commit it.
+
 ### First-time setup (run on the Windows RDP machine)
 
 **Step 1 — Discover databases**
 
-Connects to each server and populates the `databases` lists in `app/config.py`:
+Connects to each server and populates the `databases` lists in `app/servers.py`:
 
 ```bash
 cd backend
@@ -192,7 +198,14 @@ To deploy this on the internal Windows server, follow **[DEPLOY.md](DEPLOY.md)**
   pass while real DML, stacked statements, `SELECT ... INTO`, `OPENROWSET`, and
   `xp_` procedures are rejected.
 - Every statement is dry-run with `SET NOEXEC ON` before execution.
+- Dotted references to another database or linked server (`OtherDb.dbo.Table`,
+  `srv.OtherDb.dbo.Table`) are rejected — a query must stay inside the
+  (server, database) the router selected, even though the underlying login
+  can typically read more than that.
 - Queries are bounded by `NL2SQL_QUERY_TIMEOUT` (60s) and `NL2SQL_MAX_ROWS` (5000).
+- `/api/query` is rate-limited per client IP (`NL2SQL_RATE_LIMIT_PER_MINUTE`, default 20/min).
+- Every successful query is logged (question, SQL, row count) for audit purposes —
+  result data itself is never logged.
 - Grant the service account `db_datareader` only — defence in depth if a guard
   is ever bypassed.
 
@@ -202,7 +215,8 @@ All SQL Server connections use **Windows Authentication** (`Trusted_Connection=y
 
 ## Configuration
 
-Servers are defined in `backend/app/config.py`:
+Servers are defined in `backend/app/servers.py` (gitignored — copy from
+`servers.example.py` or generate it with `discover_databases.py`):
 
 ```python
 SERVERS = {
@@ -214,6 +228,10 @@ SERVERS = {
 ```
 
 Named instances (e.g. `sqlProd1\org`) omit the port so SQL Server Browser resolves it dynamically.
+
+`backend/app/config.py` itself stays tracked in git — it only holds connection
+limits (`CONNECT_TIMEOUT`, `QUERY_TIMEOUT`, `MAX_ROWS`), the `ServerConfig`
+dataclass, and connection-string helpers, none of which name real infrastructure.
 
 ## Models used
 

@@ -91,7 +91,7 @@ SSL Provider: The certificate chain was issued by an authority that is not trust
 ```
 
 If that happens, add `TrustServerCertificate` to the affected servers in
-`backend\app\config.py`:
+`backend\app\servers.py`:
 
 ```python
 "sqlProd1": ServerConfig(
@@ -114,9 +114,10 @@ cd backend
 python scripts\discover_databases.py
 ```
 
-It connects to each server in `SERVERS`, lists databases, and writes your
-selections into `app\config.py`. Use `--dry-run` first to preview, or `--all` to
-accept everything.
+The first run creates `backend\app\servers.py` from `servers.example.py` if it
+doesn't exist yet. It then connects to each server in `SERVERS`, lists
+databases, and writes your selections into `app\servers.py`. Use `--dry-run`
+first to preview, or `--all` to accept everything.
 
 Then build the embedding index:
 
@@ -127,9 +128,9 @@ python scripts\schema_cache.py
 This writes `backend\scripts\schema_cache.json` and `schema_embeddings.npy`.
 Re-run it whenever the database schema changes.
 
-> **Note:** `discover_databases.py` edits `app/config.py` in place, so that file
-> will show as modified in git on the server. Either commit the populated version
-> from the server, or leave it dirty and never `git checkout` over it.
+> **Note:** `servers.py` is gitignored, same as the schema cache — it names
+> internal hosts and your full database inventory. `discover_databases.py`
+> edits it in place on the server; there's nothing to commit or reconcile.
 
 Sanity check before moving on — this should print a non-zero table count:
 
@@ -234,7 +235,7 @@ the app is only reachable through the proxy.
 | `RuntimeError: GOOGLE_API_KEY is not set` | `.env` missing or in the wrong place. It is read from `backend\.env` first, then the repo root. |
 | `RuntimeError: NL2SQL_API_TOKEN is not set` | Same file; generate one per step 3. |
 | `Schema cache not found` at startup | Step 5 was not run on this machine. |
-| `Schema cache is empty` warning, every query 500s | `databases=[]` still empty in `config.py` — re-run `discover_databases.py`. |
+| `Schema cache is empty` warning, every query 500s | `databases=[]` still empty in `servers.py` — re-run `discover_databases.py`. |
 | `certificate chain ... not trusted` | Step 4. |
 | `Login failed for user 'DOMAIN\svc_...'` | Service account lacks SQL read access. Not a code issue. |
 | Queries hang then fail after ~60s | `NL2SQL_QUERY_TIMEOUT` hit. Raise it, or the question needs a narrower query. |

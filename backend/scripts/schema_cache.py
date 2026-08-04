@@ -21,11 +21,12 @@ import env_loader
 env_loader.load()
 
 from app.config import SERVERS, build_odbc_conn_str
-from app.pipeline.embedder import Embedder
+from app.pipeline.embedder import EMBED_DIM, Embedder
 from app.models import ColumnInfo, SchemaCache, TableInfo
 
 CACHE_PATH = pathlib.Path(__file__).parent / "schema_cache.json"
 EMBED_PATH = pathlib.Path(__file__).parent / "schema_embeddings.npy"
+PROGRESS_PATH = pathlib.Path(__file__).parent / "schema_embeddings.progress.json"
 
 _TABLES_SQL = """
 SELECT
@@ -139,7 +140,7 @@ def build_cache(servers: dict | None = None) -> SchemaCache:
     )
 
 
-def save_cache(cache: SchemaCache, embedder: Embedder) -> None:
+def _write_table_json(cache: SchemaCache) -> None:
     data = {
         "built_at": cache.built_at,
         "tables": [
@@ -166,15 +167,71 @@ def save_cache(cache: SchemaCache, embedder: Embedder) -> None:
     }
     CACHE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    if cache.tables:
-        print(f"  embedding {len(cache.tables)} tables …")
-        tokens = [t.embedding_token for t in cache.tables]
-        matrix = embedder.embed_batch(tokens, task_type="RETRIEVAL_DOCUMENT")
-        np.save(EMBED_PATH, matrix)
-    else:
-        np.save(EMBED_PATH, np.empty((0, 768), dtype=np.float32))
 
-    print(f"Saved {CACHE_PATH} and {EMBED_PATH}")
+def _load_partial_embeddings(expected_tokens: list[str]) -> np.ndarray | None:
+    """Return a partial embeddings matrix from a prior run, or None if there's
+    nothing usable to resume from (mismatched table set, no progress file)."""
+    if not EMBED_PATH.exists() or not PROGRESS_PATH.exists():
+        return None
+    progress = json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
+    if progress.get("tokens") != expected_tokens[: len(progress.get("tokens", []))]:
+        return None  # table order/content changed since the last partial run
+    matrix = np.load(EMBED_PATH)
+    if matrix.shape[0] != len(progress.get("tokens", [])):
+        return None
+    return matrix
+
+
+def save_cache(
+    cache: SchemaCache, embedder: Embedder, chunk_tables: int | None = None
+) -> bool:
+    """Write schema_cache.json, then embed tables in resumable chunks.
+
+    Returns True once every table has an embedding, False if a `chunk_tables`
+    limit stopped the run partway — re-run the script to continue.
+    """
+    _write_table_json(cache)
+
+    if not cache.tables:
+        np.save(EMBED_PATH, np.empty((0, EMBED_DIM), dtype=np.float32))
+        PROGRESS_PATH.unlink(missing_ok=True)
+        print(f"Saved {CACHE_PATH} and {EMBED_PATH}")
+        return True
+
+    tokens = [t.embedding_token for t in cache.tables]
+    done_matrix = _load_partial_embeddings(tokens)
+    start = done_matrix.shape[0] if done_matrix is not None else 0
+
+    remaining = tokens[start:]
+    if chunk_tables is not None:
+        remaining = remaining[:chunk_tables]
+
+    if not remaining:
+        print(f"  all {len(tokens)} tables already embedded.")
+    else:
+        end = start + len(remaining)
+        print(f"  embedding tables {start + 1}-{end} of {len(tokens)} …")
+        new_matrix = embedder.embed_batch(remaining, task_type="RETRIEVAL_DOCUMENT")
+        done_matrix = (
+            new_matrix
+            if done_matrix is None
+            else np.concatenate([done_matrix, new_matrix], axis=0)
+        )
+        np.save(EMBED_PATH, done_matrix)
+        PROGRESS_PATH.write_text(
+            json.dumps({"tokens": tokens[: done_matrix.shape[0]]}), encoding="utf-8"
+        )
+
+    finished = done_matrix is not None and done_matrix.shape[0] >= len(tokens)
+    if finished:
+        PROGRESS_PATH.unlink(missing_ok=True)
+        print(f"Saved {CACHE_PATH} and {EMBED_PATH} — {len(tokens)}/{len(tokens)} embedded.")
+    else:
+        print(
+            f"Partial progress saved: {done_matrix.shape[0]}/{len(tokens)} embedded. "
+            "Re-run this script to continue."
+        )
+    return finished
 
 
 def load_cache() -> SchemaCache:
@@ -210,10 +267,29 @@ def load_embeddings() -> np.ndarray:
 
 
 if __name__ == "__main__":
+    import argparse
     import os
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--chunk-tables",
+        type=int,
+        default=None,
+        help="Embed at most this many tables this run, then save progress and "
+        "exit (0). Re-run to continue from where it left off. Omit to embed "
+        "everything in one run.",
+    )
+    args = parser.parse_args()
+
     embedder = Embedder(api_key=os.environ["GOOGLE_API_KEY"])
-    print("Building schema cache …")
-    cache = build_cache()
+
+    if CACHE_PATH.exists():
+        print("Reusing existing schema_cache.json (delete it to force re-introspection).")
+        cache = load_cache()
+    else:
+        print("Building schema cache …")
+        cache = build_cache()
+
     print(f"Total tables: {len(cache.tables)}")
-    save_cache(cache, embedder)
+    finished = save_cache(cache, embedder, chunk_tables=args.chunk_tables)
+    sys.exit(0 if finished else 3)

@@ -1,4 +1,4 @@
-"""Discover databases on each configured SQL Server and update config.py.
+"""Discover databases on each configured SQL Server and update servers.py.
 
 Usage:
     python discover_databases.py          # interactive: pick databases per server
@@ -18,9 +18,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import env_loader
 env_loader.load()
 
-from app.config import SERVERS
+_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "app" / "servers.py"
 
-_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "app" / "config.py"
+# app.config imports app.servers and fails closed if it's missing — bootstrap
+# it from the template first so a fresh clone can run this script at all.
+if not _CONFIG_PATH.exists():
+    _EXAMPLE_PATH = _CONFIG_PATH.with_name("servers.example.py")
+    _CONFIG_PATH.write_text(_EXAMPLE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    print(f"Created {_CONFIG_PATH} from servers.example.py.")
+
+from app.config import SERVERS
 
 _LIST_DBS_SQL = """
 SELECT name

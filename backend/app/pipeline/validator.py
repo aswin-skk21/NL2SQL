@@ -35,7 +35,7 @@ def validate_and_correct(
     schema_block = _format_schema_block(context.relevant_tables)
 
     for attempt in range(1, _MAX_RETRIES + 1):
-        guard_err = _sqlparse_guard(sql)
+        guard_err = _sqlparse_guard(sql) or _cross_database_guard(sql, context.database)
         if guard_err:
             if attempt < _MAX_RETRIES:
                 sql = _llm_correct(sql, guard_err, context, schema_block, llm_client, temperature)
@@ -82,6 +82,47 @@ def _sqlparse_guard(sql: str) -> str | None:
             return f"Forbidden function detected: {token.value!r}."
         if value.startswith("xp_") and (token.ttype in T.Name or token.ttype in T.Keyword):
             return f"Forbidden extended stored procedure: {token.value!r}."
+    return None
+
+
+def _cross_database_guard(sql: str, database: str) -> str | None:
+    """Reject table references that escape the routed database.
+
+    The router picks one (server, database) pair and the connection is opened
+    against `database`, but T-SQL lets a query name a different database (or
+    even a different linked server) right in the FROM clause via dotted
+    identifiers — `OtherDb.dbo.Table` or `srv.OtherDb.dbo.Table` — which
+    `SET NOEXEC ON` happily compiles if the connection's login can read it.
+    Since the login is a shared Windows service account with read access
+    across many databases, that's a silent way out of the schema the router
+    selected. Only two-part (schema.table) and one-part (table) references are
+    implicitly database-scoped and always allowed.
+    """
+    statement = sqlparse.parse(sql.strip())[0]
+    tokens = [t for t in statement.flatten() if not t.is_whitespace]
+    n = len(tokens)
+    i = 0
+    while i < n:
+        tok = tokens[i]
+        if tok.ttype in T.Name:
+            first = tok
+            j = i + 1
+            dots = 0
+            while j < n and tokens[j].ttype is T.Punctuation and tokens[j].value == ".":
+                dots += 1
+                j += 1
+                if j < n and tokens[j].ttype in T.Name:
+                    j += 1
+            if dots >= 2:
+                named = first.value.strip('[]"').lower()
+                if dots >= 3 or named != database.lower():
+                    return (
+                        f"Cross-database reference to {first.value!r} is not "
+                        f"allowed; the query must stay within '{database}'."
+                    )
+            i = j
+        else:
+            i += 1
     return None
 
 

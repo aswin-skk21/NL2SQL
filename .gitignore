@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# real server topology — internal hostnames + full database inventory.
+# Populated by scripts/discover_databases.py; see app/servers.example.py.
+backend/app/servers.py
+
 # generated schema cache — contains a full table/column inventory of the
 # production databases. Rebuilt by scripts/schema_cache.py on the target machine.
 backend/scripts/schema_cache.json

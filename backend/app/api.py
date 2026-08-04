@@ -3,11 +3,14 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import threading
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -58,7 +61,7 @@ async def lifespan(app: FastAPI):
     if table_count == 0:
         logger.warning(
             "Schema cache is empty — every query will fail. Populate the "
-            "'databases' lists in app/config.py and re-run scripts/schema_cache.py."
+            "'databases' lists in app/servers.py and re-run scripts/schema_cache.py."
         )
     logger.info("NL2SQL ready — %d tables cached", table_count)
 
@@ -92,6 +95,29 @@ def require_token(authorization: str = Header(default="")) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing API token.")
 
 
+# Each request runs an LLM round-trip plus a real SQL Server query, so an
+# unbounded client can rack up API cost and pin the database. There's no
+# per-user identity (one shared token), so this throttles per client IP.
+_RATE_LIMIT_PER_MINUTE = int(os.getenv("NL2SQL_RATE_LIMIT_PER_MINUTE", "20"))
+_rate_lock = threading.Lock()
+_rate_hits: dict[str, deque[float]] = defaultdict(deque)
+
+
+def rate_limit(request: Request) -> None:
+    key = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    with _rate_lock:
+        hits = _rate_hits[key]
+        while hits and now - hits[0] > 60:
+            hits.popleft()
+        if len(hits) >= _RATE_LIMIT_PER_MINUTE:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded. Please wait a minute and try again.",
+            )
+        hits.append(now)
+
+
 class QueryRequest(BaseModel):
     question: str
 
@@ -122,7 +148,9 @@ def health() -> dict:
 # ODBC I/O, so FastAPI runs it in a worker thread. Declaring it async would
 # both stall the event loop and break the executor's database call.
 @app.post(
-    "/api/query", response_model=QueryResponse, dependencies=[Depends(require_token)]
+    "/api/query",
+    response_model=QueryResponse,
+    dependencies=[Depends(require_token), Depends(rate_limit)],
 )
 def query(req: QueryRequest) -> QueryResponse:
     if not req.question.strip():
@@ -166,6 +194,20 @@ def query(req: QueryRequest) -> QueryResponse:
 
         exec_result = execute_sql(validation, context.server, context.database)
         answer = generate_answer(req.question, exec_result, _state["llm_client"])
+
+        # Audit trail: question + SQL + row count, not the result data itself —
+        # there's no per-user identity (shared token) so this is the only
+        # record of who-asked-what against production data.
+        logger.info(
+            "query OK db=%s.%s rows=%d truncated=%s attempts=%d question=%r sql=%r",
+            context.server,
+            context.database,
+            exec_result.row_count,
+            exec_result.truncated,
+            validation.attempts,
+            req.question,
+            validation.sql,
+        )
 
         rows = None
         columns = None

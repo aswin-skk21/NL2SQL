@@ -1,6 +1,7 @@
 # Pinned to the versions verified working. If a wheel is unavailable for the
 # target Python on Windows, relax the pin for that one package.
 google-genai==2.10.0
+fastembed==0.8.0
 pyodbc==5.3.0
 pandas==3.0.3
 numpy==2.4.6

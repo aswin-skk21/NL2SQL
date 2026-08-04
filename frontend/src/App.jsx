@@ -45,7 +45,7 @@ export default function App() {
       <div className="app">
         <header className="app-header">
           <div className="logo-badge">SQL</div>
-          <h1>NL2SQL</h1>
+          <h1>IPSD Database Query Tool</h1>
           <p>Enter the access token to continue.</p>
         </header>
 
