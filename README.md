@@ -8,12 +8,12 @@ Natural language to SQL pipeline for Microsoft SQL Server. Ask a question in pla
 Question → Embed → Schema Route → Generate SQL → Validate & Self-Correct → Execute → Answer
 ```
 
-1. **Embed** — converts the question into a vector using Gemini `text-embedding-004`
-2. **Schema Route** — scores all tables by cosine similarity, then asks Gemini Flash to pick the relevant server/database/tables
-3. **Generate SQL** — Gemini Pro writes T-SQL from the selected schema (presented as DDL)
-4. **Validate & Self-Correct** — runs `SET NOEXEC ON` against the real database to catch schema errors; sends failures back to the LLM for correction (up to 3 attempts)
+1. **Embed** — converts the question into a vector using a local `fastembed` model (no API call, no rate limit)
+2. **Schema Route** — scores all tables by cosine similarity, then asks Gemini to pick the relevant server/database/tables
+3. **Generate SQL** — Gemini writes T-SQL from the selected schema (presented as DDL)
+4. **Validate & Self-Correct** — runs `SET NOEXEC ON` against the real database to catch schema errors, and rejects cross-database table references; sends failures back to the LLM for correction (up to 3 attempts)
 5. **Execute** — runs the validated SQL and returns a pandas DataFrame
-6. **Answer** — Gemini Flash converts the results into a plain-English response
+6. **Answer** — Gemini converts the results into a plain-English response
 
 ## Architecture
 
@@ -33,7 +33,7 @@ graph TD
         Val["validator.py<br/>SET NOEXEC ON<br/>self-correct loop"]
         Exec["executor.py<br/>run SQL"]
         Ans["answerer.py<br/>DataFrame → NL answer"]
-        Emb["embedder.py<br/>Gemini text-embedding-004"]
+        Emb["embedder.py<br/>local fastembed model"]
     end
 
     API --> Router
@@ -46,8 +46,7 @@ graph TD
     Val -- dry-run / execute --> SQLServer[("MS SQL Server<br/>(7 servers, Windows Auth)")]
     Exec -- execute --> SQLServer
 
-    Gemini{{"Google Gemini API<br/>(embed / flash / pro)"}}
-    Emb --> Gemini
+    Gemini{{"Google Gemini API<br/>(gemini-flash-latest)"}}
     Router --> Gemini
     Gen --> Gemini
     Val --> Gemini
@@ -73,14 +72,14 @@ NL2SQL/
 │   │   ├── models.py           # shared dataclasses (pipeline contracts)
 │   │   ├── prompts.py          # all LLM prompt templates
 │   │   └── pipeline/
-│   │       ├── embedder.py     # Gemini text-embedding-004 wrapper
+│   │       ├── embedder.py     # local fastembed (BAAI/bge-small-en-v1.5) wrapper
 │   │       ├── router.py       # embedding pre-filter + LLM schema routing
-│   │       ├── sql_generator.py# NL → T-SQL via Gemini Pro
+│   │       ├── sql_generator.py# NL → T-SQL via Gemini
 │   │       ├── validator.py    # SET NOEXEC ON dry-run + correction loop
 │   │       ├── executor.py     # SQL execution → pandas DataFrame
 │   │       └── answerer.py     # DataFrame → natural language answer
 │   ├── scripts/
-│   │   ├── discover_databases.py  # connect to servers and populate config
+│   │   ├── discover_databases.py  # connect to servers and populate servers.py
 │   │   └── schema_cache.py        # introspect schema, build embedding index
 │   ├── env_loader.py           # minimal .env loader (no extra deps)
 │   ├── main.py                 # CLI entry point
@@ -153,7 +152,9 @@ python scripts/schema_cache.py
 
 This produces `schema_cache.json` and `schema_embeddings.npy` in the `scripts/` folder. Re-run whenever the database schema changes.
 
-### Run
+### Run — CLI
+
+One-shot:
 
 ```bash
 cd backend
@@ -167,20 +168,80 @@ python main.py
 Question: <type your question>
 ```
 
-### Web UI
+The CLI only reads `GOOGLE_API_KEY` — it doesn't go through `NL2SQL_API_TOKEN`
+since there's no HTTP layer involved.
 
-Build the frontend once, then start the server:
+### Run — Web UI
+
+There are two ways to run the web UI, depending on whether you're developing
+the frontend or just using the app.
+
+**Option A — dev mode (hot reload), two terminals**
+
+Use this while working on `frontend/src/*` — edits show up without a rebuild.
+
+Terminal 1 — backend API on port 8000:
 
 ```bash
-cd frontend && npm ci && npm run build
+cd backend
+python server.py
+```
+
+Wait for `Uvicorn running on http://0.0.0.0:8000` in the log, then confirm it's
+actually up:
+
+```bash
+curl http://localhost:8000/api/health
+# {"status":"ok","tables_cached":2973,"cache_built_at":"..."}
+```
+
+If `status` comes back `"starting"` or the process exits immediately, check the
+log for a missing `.env` value, a missing `backend/app/servers.py`, or a missing
+schema cache — the server fails closed on all three (see Setup above).
+
+Terminal 2 — Vite dev server on port 5173:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open **http://localhost:5173/**. Vite proxies any `/api/*` request to
+`localhost:8000` (see `frontend/vite.config.js`), so the UI talks to the real
+backend with no CORS setup needed. You can sanity-check the proxy directly:
+
+```bash
+curl http://localhost:5173/api/health
+# same response as the direct :8000 call above
+```
+
+**Option B — production-style, single process**
+
+Use this to run the app the way it runs when deployed — one server, one port,
+no Vite in the loop.
+
+```bash
+cd frontend && npm ci && npm run build   # writes frontend/dist/
 cd ../backend && python server.py
 ```
 
-Open `http://localhost:8000/`, paste the `NL2SQL_API_TOKEN`, and ask a question.
-The API serves the built UI from `frontend/dist` at `/`.
+Open **http://localhost:8000/** — the API serves the built UI from
+`frontend/dist` at `/`, and `/api/*` on the same origin.
 
-For frontend development with hot reload, run `npm run dev` in `frontend/` — Vite
-proxies `/api` to the backend on port 8000.
+**Using either option**
+
+1. Get the token: `grep NL2SQL_API_TOKEN .env` (or open `.env` directly).
+2. Paste it into the "Access token" field the UI shows on first load — it's
+   stored in `localStorage` on that browser only, never baked into the build.
+3. Ask a question. The first real query is slower than the rest: the local
+   `fastembed` model downloads its weights to a cache directory the first time
+   `Embedder()` is constructed (a few seconds, one-time per machine).
+4. Watch the backend terminal — every successful query logs
+   `query OK db=<server>.<database> rows=<n> ... question=... sql=...` so you
+   can see routing and generated SQL as you test.
+
+**Stopping either server:** `Ctrl-C` in its terminal. There's nothing to clean
+up — the schema cache and embeddings are read-only files, not a running service.
 
 To deploy this on the internal Windows server, follow **[DEPLOY.md](DEPLOY.md)**.
 
@@ -237,20 +298,21 @@ dataclass, and connection-string helpers, none of which name real infrastructure
 
 | Stage | Model | Why |
 |---|---|---|
-| Embedding | `text-embedding-004` | 768-dim, optimized for retrieval |
-| Schema routing | `gemini-2.5-flash` | cheap classification, temp=0 |
-| SQL generation | `gemini-2.5-pro` | best reasoning for complex T-SQL |
-| SQL correction | `gemini-2.5-pro` | same model sees the error and fixes it |
-| NL answer | `gemini-2.5-flash` | summarisation doesn't need Pro |
+| Embedding | `BAAI/bge-small-en-v1.5` (local, via `fastembed`) | 384-dim, offline — no API quota/rate limit for the similarity pre-filter |
+| Schema routing | `gemini-flash-latest` | cheap classification, temp=0 |
+| SQL generation | `gemini-flash-latest` | writes the T-SQL from the routed schema |
+| SQL correction | `gemini-flash-latest` | same model sees the dry-run error and fixes it |
+| NL answer | `gemini-flash-latest` | summarizes the result set |
 
 ## Dependencies
 
 | Package | Purpose |
 |---|---|
-| `google-genai` | Gemini LLM + embeddings |
+| `google-genai` | Gemini LLM calls (routing, SQL gen/correction, answers) |
+| `fastembed` | local embedding model for the schema similarity pre-filter |
 | `pyodbc` | SQL Server ODBC driver bridge + query execution |
 | `pandas` | query results as DataFrames |
 | `numpy` | cosine similarity over embedding matrix |
-| `sqlparse` | SQL statement parsing and the read-only guard |
+| `sqlparse` | SQL statement parsing, the read-only guard, and the cross-database guard |
 | `tabulate` | DataFrame markdown formatting |
 | `fastapi` / `uvicorn` | web API and server |
